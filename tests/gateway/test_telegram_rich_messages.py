@@ -191,6 +191,19 @@ async def test_astral_cjk_rich_content_skips_rich_send_to_avoid_tdesktop_garble(
 
 
 @pytest.mark.asyncio
+async def test_rich_always_allows_cjk_rich_content():
+    adapter = _make_adapter(extra={"rich_always": True})
+
+    result = await adapter.send("12345", CJK_RICH_CONTENT)
+
+    assert result.success is True
+    bot = adapter._bot
+    assert bot is not None
+    bot.do_api_request.assert_awaited_once()
+    bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_rich_messages_opt_out_uses_legacy_send_path():
     adapter = _make_adapter(extra={"rich_messages": False})
 
@@ -295,6 +308,19 @@ async def test_plain_markdown_stays_on_legacy_path():
     assert bot is not None
     bot.do_api_request.assert_not_called()
     bot.send_message.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rich_always_sends_plain_markdown_via_rich_path():
+    adapter = _make_adapter(extra={"rich_always": True})
+
+    result = await adapter.send("12345", "你好 **主人**\n\n普通中文回复。")
+
+    assert result.success is True
+    bot = adapter._bot
+    assert bot is not None
+    bot.do_api_request.assert_awaited_once()
+    bot.send_message.assert_not_called()
 
 
 @pytest.mark.asyncio

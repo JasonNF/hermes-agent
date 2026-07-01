@@ -514,7 +514,11 @@ class TelegramAdapter(BasePlatformAdapter):
         # current Telegram clients can make rich messages difficult to copy
         # as plain text, which is worse than degraded table/task-list rendering
         # for command snippets and mobile handoffs.
-        self._rich_messages_enabled: bool = self._coerce_bool_extra("rich_messages", False)
+        self._rich_always_enabled: bool = self._coerce_bool_extra("rich_always", False)
+        self._rich_messages_enabled: bool = bool(
+            self._coerce_bool_extra("rich_messages", False)
+            or self._rich_always_enabled
+        )
         # Rich draft previews use a separate opt-in. Telegram macOS / Desktop
         # can leave Bot API 10.1 rich draft frames visually overlaid until the
         # chat is redrawn, while final rich messages remain useful.
@@ -1406,9 +1410,15 @@ class TelegramAdapter(BasePlatformAdapter):
             and not getattr(self, "_rich_send_disabled", False)
             and content
             and content.strip()
-            and self._needs_rich_rendering(content)
+            and (
+                getattr(self, "_rich_always_enabled", False)
+                or self._needs_rich_rendering(content)
+            )
             and not self._has_telegram_desktop_details_math_crash_shape(content)
-            and not self._has_telegram_desktop_cjk_rich_garble_shape(content)
+            and (
+                getattr(self, "_rich_always_enabled", False)
+                or not self._has_telegram_desktop_cjk_rich_garble_shape(content)
+            )
             and self._content_fits_rich_limits(content)
             and self._bot_supports_rich()
         )
@@ -1756,7 +1766,10 @@ class TelegramAdapter(BasePlatformAdapter):
             and content
             and content.strip()
             and not self._has_telegram_desktop_details_math_crash_shape(content)
-            and not self._has_telegram_desktop_cjk_rich_garble_shape(content)
+            and (
+                getattr(self, "_rich_always_enabled", False)
+                or not self._has_telegram_desktop_cjk_rich_garble_shape(content)
+            )
             and self._content_fits_rich_limits(content)
             and self._bot_supports_rich()
         )
