@@ -125,6 +125,93 @@ async def test_astral_cjk_rich_content_skips_rich_send_to_avoid_tdesktop_garble(
 
 
 @pytest.mark.asyncio
+async def test_rich_always_allows_cjk_rich_content():
+    adapter = _make_adapter(extra={"rich_always": True})
+
+    result = await adapter.send("12345", CJK_RICH_CONTENT)
+
+    assert result.success is True
+    bot = adapter._bot
+    assert bot is not None
+    bot.do_api_request.assert_awaited_once()
+    bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rich_always_forces_plain_markdown_to_rich_send():
+    adapter = _make_adapter(extra={"rich_always": True})
+
+    result = await adapter.send("12345", "普通 **加粗** 回复")
+
+    assert result.success is True
+    bot = adapter._bot
+    assert bot is not None
+    bot.do_api_request.assert_awaited_once()
+    bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rich_always_keeps_details_math_crash_guard():
+    adapter = _make_adapter(extra={"rich_always": True})
+    bot = adapter._bot
+    assert bot is not None
+    bot.do_api_request = AsyncMock()
+    bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+    bot.send_chat_action = AsyncMock()
+    adapter._bot = bot
+
+    result = await adapter.send("12345", RICH_CONTENT)
+
+    assert result.success is True
+    bot.do_api_request.assert_not_called()
+    bot.send_message.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rich_messages_can_be_opted_in():
+    """Setting platforms.telegram.extra.rich_messages: true enables native
+    Bot API rich rendering for tables/task lists/details/math."""
+    config = PlatformConfig(
+        enabled=True, token="fake-token", extra={"rich_messages": True}
+    )
+    adapter = TelegramAdapter(config)
+    bot = MagicMock()
+    bot.do_api_request = AsyncMock(return_value=SimpleNamespace(message_id=123))
+    bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+    bot.send_chat_action = AsyncMock()
+    adapter._bot = bot
+
+    result = await adapter.send("12345", RICH_CONTENT)
+
+    assert result.success is True
+    bot = adapter._bot
+    assert bot is not None
+    bot.do_api_request.assert_awaited_once()
+    bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rich_messages_can_be_opted_out():
+    """Setting platforms.telegram.extra.rich_messages: false keeps every reply
+    on the legacy MarkdownV2 path even for rich-eligible content."""
+    config = PlatformConfig(
+        enabled=True, token="fake-token", extra={"rich_messages": False}
+    )
+    adapter = TelegramAdapter(config)
+    bot = MagicMock()
+    bot.do_api_request = AsyncMock(return_value=SimpleNamespace(message_id=123))
+    bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+    bot.send_chat_action = AsyncMock()
+    adapter._bot = bot
+
+    result = await adapter.send("12345", RICH_CONTENT)
+
+    assert result.success is True
+    bot.do_api_request.assert_not_called()
+    bot.send_message.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_plain_markdown_stays_on_legacy_path():
     """Ordinary replies (no table/task-list/details/math) stay on the legacy
     MarkdownV2 path for consistent client rendering, even with rich enabled."""
@@ -137,6 +224,19 @@ async def test_plain_markdown_stays_on_legacy_path():
     assert bot is not None
     bot.do_api_request.assert_not_called()
     bot.send_message.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rich_always_sends_plain_markdown_via_rich_path():
+    adapter = _make_adapter(extra={"rich_always": True})
+
+    result = await adapter.send("12345", "你好 **主人**\n\n普通中文回复。")
+
+    assert result.success is True
+    bot = adapter._bot
+    assert bot is not None
+    bot.do_api_request.assert_awaited_once()
+    bot.send_message.assert_not_called()
 
 
 @pytest.mark.asyncio
