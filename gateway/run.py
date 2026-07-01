@@ -11778,21 +11778,37 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         await self._deliver_media_from_response(
                             response, event, _media_adapter,
                         )
-                # Streaming already delivered the body text, but the footer was
-                # intentionally held back (see the `not already_sent` gate above).
-                # Send it now as a small trailing message so Telegram/Discord/etc.
-                # still surface the runtime metadata on the final reply.
+                # Streaming already delivered the body text.  Prefer editing the
+                # streamed final message in place to append the footer so Telegram
+                # does not show a second standalone metadata bubble.  Only fall
+                # back to a trailing send when we have no stream message id.
                 if _footer_line:
                     try:
                         _foot_adapter = self.adapters.get(source.platform)
-                        if _foot_adapter:
+                        _stream_msg_id = agent_result.get("stream_message_id")
+                        if _foot_adapter and _stream_msg_id and response:
+                            _footer_body = response if _footer_line in response else f"{response}\n\n{_footer_line}"
+                            _edit_result = await _foot_adapter.edit_message(
+                                chat_id=source.chat_id,
+                                message_id=str(_stream_msg_id),
+                                content=_footer_body,
+                                finalize=True,
+                                metadata=self._thread_metadata_for_source(source, self._reply_anchor_for_event(event)),
+                            )
+                            if not getattr(_edit_result, "success", False) and _foot_adapter:
+                                await _foot_adapter.send(
+                                    source.chat_id,
+                                    _footer_line,
+                                    metadata=self._thread_metadata_for_source(source, self._reply_anchor_for_event(event)),
+                                )
+                        elif _foot_adapter:
                             await _foot_adapter.send(
                                 source.chat_id,
                                 _footer_line,
                                 metadata=self._thread_metadata_for_source(source, self._reply_anchor_for_event(event)),
                             )
                     except Exception as _e:
-                        logger.debug("trailing footer send failed: %s", _e)
+                        logger.debug("stream footer finalize/edit failed: %s", _e)
                 return None
 
             return response
@@ -19513,6 +19529,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     _content_delivered,
                 )
                 response["already_sent"] = True
+                if _sc is not None and getattr(_sc, "message_id", None):
+                    response["stream_message_id"] = _sc.message_id
             elif not _is_empty_sentinel and _transformed and _sc is not None:
                 # Plugin hooks transformed the response after streaming — edit the
                 # existing streamed message instead of sending a duplicate.
