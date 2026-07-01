@@ -64,7 +64,7 @@ def resolve_footer_config(
         2. ``display.runtime_footer``
         3. ``display.platforms.<platform_key>.runtime_footer``
     """
-    resolved = {"enabled": False, "fields": list(_DEFAULT_FIELDS)}
+    resolved = {"enabled": False, "fields": list(_DEFAULT_FIELDS), "style": "plain"}
     cfg = (user_config or {}).get("display") or {}
 
     global_cfg = cfg.get("runtime_footer")
@@ -73,6 +73,8 @@ def resolve_footer_config(
             resolved["enabled"] = bool(global_cfg.get("enabled"))
         if isinstance(global_cfg.get("fields"), list) and global_cfg["fields"]:
             resolved["fields"] = [str(f) for f in global_cfg["fields"]]
+        if isinstance(global_cfg.get("style"), str) and global_cfg["style"]:
+            resolved["style"] = str(global_cfg["style"])
 
     if platform_key:
         platforms = cfg.get("platforms") or {}
@@ -84,6 +86,8 @@ def resolve_footer_config(
                     resolved["enabled"] = bool(plat_footer.get("enabled"))
                 if isinstance(plat_footer.get("fields"), list) and plat_footer["fields"]:
                     resolved["fields"] = [str(f) for f in plat_footer["fields"]]
+                if isinstance(plat_footer.get("style"), str) and plat_footer["style"]:
+                    resolved["style"] = str(plat_footer["style"])
 
     return resolved
 
@@ -95,31 +99,42 @@ def format_runtime_footer(
     context_length: Optional[int],
     cwd: Optional[str] = None,
     fields: Iterable[str] = _DEFAULT_FIELDS,
+    elapsed_s: Optional[float] = None,
+    style: str = "plain",
 ) -> str:
     """Render the footer line, or return "" if no fields have data.
 
     Fields are skipped silently when their underlying data is missing — a
     partially-populated footer is better than a line with ``?%`` or empty slots.
     """
+    rich_style = str(style or "plain") == "labeled_quote"
     parts: list[str] = []
     for field in fields:
         if field == "model":
             m = _model_short(model)
             if m:
-                parts.append(m)
+                parts.append(f"🧠 {m}" if rich_style else m)
+        elif field == "elapsed_s":
+            if elapsed_s is not None and elapsed_s >= 0:
+                value = f"{elapsed_s:.1f}s"
+                parts.append(f"⏰ {value}" if rich_style else value)
         elif field == "context_pct":
             if context_length and context_length > 0 and context_tokens >= 0:
                 pct = max(0, min(100, round((context_tokens / context_length) * 100)))
-                parts.append(f"{pct}%")
+                value = f"{pct}%"
+                parts.append(f"🪟 {value}" if rich_style else value)
         elif field == "cwd":
             rel = _home_relative_cwd(cwd or os.environ.get("TERMINAL_CWD", ""))
             if rel:
-                parts.append(rel)
+                parts.append(f"📁 {rel}" if rich_style else rel)
         # Unknown field names are silently ignored.
 
     if not parts:
         return ""
-    return _SEP.join(parts)
+    line = _SEP.join(parts)
+    if rich_style:
+        return f"> {line}"
+    return line
 
 
 def build_footer_line(
@@ -130,6 +145,7 @@ def build_footer_line(
     context_tokens: int,
     context_length: Optional[int],
     cwd: Optional[str] = None,
+    elapsed_s: Optional[float] = None,
 ) -> str:
     """Top-level entry point used by gateway/run.py.
 
@@ -146,4 +162,6 @@ def build_footer_line(
         context_length=context_length,
         cwd=cwd,
         fields=cfg.get("fields") or _DEFAULT_FIELDS,
+        elapsed_s=elapsed_s,
+        style=str(cfg.get("style") or "plain"),
     )

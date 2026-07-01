@@ -137,6 +137,19 @@ def test_format_footer_custom_field_order():
     assert out == "50% · gpt-5.4"
 
 
+def test_format_footer_elapsed_and_labeled_quote_style():
+    out = format_runtime_footer(
+        model="openai/gpt-5.5",
+        context_tokens=50,
+        context_length=100,
+        cwd="/tmp/project",
+        fields=("model", "elapsed_s", "context_pct", "cwd"),
+        elapsed_s=12.34,
+        style="labeled_quote",
+    )
+    assert out == "> 🧠 gpt-5.5 · ⏰ 12.3s · 🪟 50% · 📁 /tmp/project"
+
+
 def test_format_footer_unknown_field_silently_ignored():
     out = format_runtime_footer(
         model="openai/gpt-5.4",
@@ -153,7 +166,11 @@ def test_format_footer_unknown_field_silently_ignored():
 
 def test_resolve_defaults_off_empty_config():
     cfg = resolve_footer_config({}, "telegram")
-    assert cfg == {"enabled": False, "fields": ["model", "context_pct", "cwd"]}
+    assert cfg == {
+        "enabled": False,
+        "fields": ["model", "context_pct", "cwd"],
+        "style": "plain",
+    }
 
 
 def test_resolve_global_enable():
@@ -195,6 +212,19 @@ def test_resolve_platform_can_add_fields_only():
     assert dc["fields"] == ["context_pct"]
 
 
+def test_resolve_style_with_platform_override():
+    user = {
+        "display": {
+            "runtime_footer": {"enabled": True, "style": "labeled_quote"},
+            "platforms": {
+                "telegram": {"runtime_footer": {"style": "plain"}},
+            },
+        },
+    }
+    assert resolve_footer_config(user, "slack")["style"] == "labeled_quote"
+    assert resolve_footer_config(user, "telegram")["style"] == "plain"
+
+
 def test_resolve_ignores_malformed_config():
     # Non-dict runtime_footer shouldn't crash
     user = {"display": {"runtime_footer": "on"}}
@@ -229,6 +259,27 @@ def test_build_footer_returns_rendered_when_enabled(monkeypatch, tmp_path):
     (tmp_path / "proj").mkdir(exist_ok=True)
     assert "gpt-5.4" in out
     assert "25%" in out
+
+
+def test_build_footer_uses_elapsed_and_style():
+    out = build_footer_line(
+        user_config={
+            "display": {
+                "runtime_footer": {
+                    "enabled": True,
+                    "fields": ["model", "elapsed_s"],
+                    "style": "labeled_quote",
+                }
+            }
+        },
+        platform_key="telegram",
+        model="openai/gpt-5.5",
+        context_tokens=25,
+        context_length=100,
+        cwd="/tmp/proj",
+        elapsed_s=9.87,
+    )
+    assert out == "> 🧠 gpt-5.5 · ⏰ 9.9s"
 
 
 def test_build_footer_per_platform_off_suppresses():
