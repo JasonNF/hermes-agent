@@ -1,7 +1,7 @@
 """Gateway runtime-metadata footer.
 
 Renders a compact footer showing runtime state (model, context %, cwd) and
-appends it to the FINAL message of an agent turn when enabled.  Off by default
+appends it to the FINAL message of an agent turn when enabled. Off by default
 to keep replies minimal.
 
 Config (``~/.hermes/config.yaml``)::
@@ -10,26 +10,28 @@ Config (``~/.hermes/config.yaml``)::
       runtime_footer:
         enabled: true                       # off by default
         fields: [model, context_pct, cwd]   # order shown; drop any to hide
+        style: plain                        # "plain" (default) or "labeled_quote"
 
 Available fields:
-    model        — bare model id, vendor prefix dropped (``gpt-5.4``)
-    context_pct  — last-call context occupancy as a percent (``5%``)
-    latency      — wall-clock duration of the turn (``22s``, ``1m05s``)
-    cwd          — home-relative working dir (``~``)
+    model             — bare model id, vendor prefix dropped (``gpt-5.4``)
+    context_pct       — last-call context occupancy as a percent (``5%``)
+    latency           — wall-clock duration of the turn (``22s``, ``1m05s``)
+    elapsed_s         — elapsed seconds with one decimal (``22.4s``)
+    reasoning_effort  — configured reasoning effort (``high``)
+    cwd               — home-relative working dir (``~``)
 
-``latency`` is opt-in: it is NOT in the default field set, so a footer whose
-``fields`` are unset renders exactly as before.
+``latency`` and ``elapsed_s`` are opt-in: neither is in the default field set,
+so a footer whose ``fields`` are unset renders exactly as before. Use
+``latency`` for the upstream compact duration format; ``elapsed_s`` remains
+available for the local labeled Telegram quote configuration.
 
-Per-platform overrides live under ``display.platforms.<platform>.runtime_footer``.
-Users can toggle the global setting with ``/footer on|off`` from both the CLI
-and any gateway platform.
+When ``style: labeled_quote`` is set, each supported field is prefixed with an
+emoji and the whole line is wrapped in a block quote (``> ...``), giving a
+compact, scannable Telegram footer.
 
-The footer is appended to the final response text in ``gateway/run.py`` right
-before returning the response to the adapter send path — so it only lands on
-the final message a user sees, not on tool-progress updates or streaming
-partials.  When streaming is on and the final text has already been delivered
-piecemeal, the footer is sent as a separate trailing message via
-``send_trailing_footer()``.
+Per-platform overrides live under
+``display.platforms.<platform>.runtime_footer``. Users can toggle the global
+setting with ``/footer on|off`` from both the CLI and any gateway platform.
 """
 
 from __future__ import annotations
@@ -42,7 +44,7 @@ _SEP = " · "
 
 
 def _home_relative_cwd(cwd: str) -> str:
-    """Return *cwd* with ``$HOME`` collapsed to ``~``.  Empty string if unset."""
+    """Return *cwd* with ``$HOME`` collapsed to ``~``. Empty string if unset."""
     if not cwd:
         return ""
     try:
@@ -73,7 +75,7 @@ def resolve_footer_config(
         2. ``display.runtime_footer``
         3. ``display.platforms.<platform_key>.runtime_footer``
     """
-    resolved = {"enabled": False, "fields": list(_DEFAULT_FIELDS)}
+    resolved = {"enabled": False, "fields": list(_DEFAULT_FIELDS), "style": "plain"}
     cfg = (user_config or {}).get("display") or {}
 
     global_cfg = cfg.get("runtime_footer")
@@ -82,6 +84,8 @@ def resolve_footer_config(
             resolved["enabled"] = bool(global_cfg.get("enabled"))
         if isinstance(global_cfg.get("fields"), list) and global_cfg["fields"]:
             resolved["fields"] = [str(f) for f in global_cfg["fields"]]
+        if isinstance(global_cfg.get("style"), str) and global_cfg["style"]:
+            resolved["style"] = str(global_cfg["style"])
 
     if platform_key:
         platforms = cfg.get("platforms") or {}
@@ -93,6 +97,8 @@ def resolve_footer_config(
                     resolved["enabled"] = bool(plat_footer.get("enabled"))
                 if isinstance(plat_footer.get("fields"), list) and plat_footer["fields"]:
                     resolved["fields"] = [str(f) for f in plat_footer["fields"]]
+                if isinstance(plat_footer.get("style"), str) and plat_footer["style"]:
+                    resolved["style"] = str(plat_footer["style"])
 
     return resolved
 
@@ -104,8 +110,8 @@ def _format_latency(seconds: float) -> str:
     total = int(round(seconds))
     if total < 60:
         return f"{total}s"
-    m, sec = divmod(total, 60)
-    return f"{m}m{sec:02d}s"
+    minutes, seconds_remainder = divmod(total, 60)
+    return f"{minutes}m{seconds_remainder:02d}s"
 
 
 def format_runtime_footer(
@@ -116,36 +122,49 @@ def format_runtime_footer(
     cwd: Optional[str] = None,
     turn_seconds: Optional[float] = None,
     fields: Iterable[str] = _DEFAULT_FIELDS,
+    elapsed_s: Optional[float] = None,
+    reasoning_effort: Optional[str] = None,
+    style: str = "plain",
 ) -> str:
     """Render the footer line, or return "" if no fields have data.
 
-    Fields are skipped silently when their underlying data is missing — a
-    partially-populated footer is better than a line with ``?%`` or empty slots.
+    Fields are skipped silently when their underlying data is missing. When
+    *style* is ``"labeled_quote"``, each supported field is emoji-prefixed and
+    the whole line is wrapped in a block quote.
     """
+    rich_style = str(style or "plain") == "labeled_quote"
     parts: list[str] = []
     for field in fields:
         if field == "model":
-            m = _model_short(model)
-            if m:
-                parts.append(m)
+            value = _model_short(model)
+            if value:
+                parts.append(f"🧠 {value}" if rich_style else value)
+        elif field == "elapsed_s":
+            if elapsed_s is not None and elapsed_s >= 0:
+                value = f"{elapsed_s:.1f}s"
+                parts.append(f"⏰ {value}" if rich_style else value)
         elif field == "context_pct":
             if context_length and context_length > 0 and context_tokens >= 0:
-                pct = max(0, min(100, round((context_tokens / context_length) * 100)))
-                parts.append(f"{pct}%")
+                value = f"{max(0, min(100, round((context_tokens / context_length) * 100)))}%"
+                parts.append(f"🪟 {value}" if rich_style else value)
         elif field == "latency":
-            # Wall-clock turn duration. Skipped when the caller supplied no
-            # timing (call sites that don't measure) or the value is negative.
             if turn_seconds is not None and turn_seconds >= 0:
-                parts.append(_format_latency(turn_seconds))
+                value = _format_latency(turn_seconds)
+                parts.append(f"⏰ {value}" if rich_style else value)
         elif field == "cwd":
-            rel = _home_relative_cwd(cwd or os.environ.get("TERMINAL_CWD", ""))
-            if rel:
-                parts.append(rel)
+            value = _home_relative_cwd(cwd or os.environ.get("TERMINAL_CWD", ""))
+            if value:
+                parts.append(f"📁 {value}" if rich_style else value)
+        elif field == "reasoning_effort":
+            value = str(reasoning_effort or "").strip().lower()
+            if value:
+                parts.append(f"💭 {value}" if rich_style else value)
         # Unknown field names are silently ignored.
 
     if not parts:
         return ""
-    return _SEP.join(parts)
+    line = _SEP.join(parts)
+    return f"> {line}" if rich_style else line
 
 
 def build_footer_line(
@@ -157,17 +176,10 @@ def build_footer_line(
     context_length: Optional[int],
     cwd: Optional[str] = None,
     turn_seconds: Optional[float] = None,
+    elapsed_s: Optional[float] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> str:
-    """Top-level entry point used by gateway/run.py.
-
-    Returns the footer text (empty string when disabled or no data).  Callers
-    append this to the final response themselves, preserving a single blank
-    line of separation.
-
-    ``turn_seconds`` is the wall-clock duration of the agent run, measured by
-    the caller with ``time.monotonic()``.  Callers that don't measure it leave
-    it ``None`` and the ``latency`` field is skipped.
-    """
+    """Build the enabled footer from resolved config and supplied turn metadata."""
     cfg = resolve_footer_config(user_config, platform_key)
     if not cfg.get("enabled"):
         return ""
@@ -177,5 +189,8 @@ def build_footer_line(
         context_length=context_length,
         cwd=cwd,
         turn_seconds=turn_seconds,
+        elapsed_s=elapsed_s,
+        reasoning_effort=reasoning_effort,
         fields=cfg.get("fields") or _DEFAULT_FIELDS,
+        style=str(cfg.get("style") or "plain"),
     )
