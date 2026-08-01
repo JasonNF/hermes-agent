@@ -48,6 +48,9 @@ class TestTurnContext:
         ctx.last_progress_msg[0] = "🔍 web_search"
         assert last_progress_msg[0] == "🔍 web_search"
 
+    def test_footer_elapsed_marker_defaults_to_none(self):
+        assert TurnContext()._agent_inner_started_at is None
+
 
 class TestTurnRunner:
     def test_methods_exist_and_bind(self):

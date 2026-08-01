@@ -6283,10 +6283,6 @@ class TurnRunner:
             reset_current_session_key(_approval_session_token)
         ctx.result_holder[0] = result
 
-        # Signal the stream consumer that the agent is done
-        if _stream_consumer is not None:
-            _stream_consumer.finish()
-
         # Signal the streaming-TTS consumer that the agent is done (#60671).
         # finish() is called from the outer event-loop thread after the
         # executor returns, so early returns from run_sync are also
@@ -6307,6 +6303,42 @@ class TurnRunner:
             _output_toks = getattr(_agent, "session_completion_tokens", 0)
             _context_length = getattr(_agent.context_compressor, "context_length", 0) or 0
         _resolved_model = getattr(_agent, "model", None) if _agent else None
+
+        # Runtime footer + streaming: defer the consumer's final tick until the
+        # complete footer is known, then add it to the final streamed payload.
+        # Only token streaming is eligible: an interim-only consumer must not
+        # swallow the ordinary final response or turn a footer into a duplicate.
+        _footer_included_in_final_response = False
+        if _stream_consumer is not None:
+            if _want_stream_deltas and final_response and not result.get("failed"):
+                try:
+                    from gateway.runtime_footer import build_footer_line as _bfl
+                    _stream_footer = _bfl(
+                        user_config=ctx.user_config,
+                        platform_key=platform_key,
+                        model=_resolved_model,
+                        context_tokens=_last_prompt_toks or 0,
+                        context_length=_context_length or None,
+                        cwd=os.environ.get("TERMINAL_CWD", ""),
+                        elapsed_s=(
+                            time.time() - ctx._agent_inner_started_at
+                            if getattr(ctx, "_agent_inner_started_at", None) is not None
+                            else None
+                        ),
+                        reasoning_effort=(reasoning_config or {}).get("effort"),
+                    )
+                    if _stream_footer:
+                        _stream_consumer.set_final_suffix(f"\n\n{_stream_footer}")
+                        # Mirror the same suffix into the returned response. If
+                        # streaming falls back before final delivery, the normal
+                        # gateway send still carries the footer exactly once.
+                        final_response = f"{final_response}\n\n{_stream_footer}"
+                        _footer_included_in_final_response = True
+                except Exception as _footer_err:
+                    logger.debug("stream runtime_footer attach failed: %s", _footer_err)
+            # Finish only after any suffix has been queued. A second finish
+            # from cleanup is harmless, but this ordering is not optional.
+            _stream_consumer.finish()
 
         # Sync session_id immediately after run_conversation(). Compression
         # can rotate before a follow-up model call fails; the failure return
@@ -6443,6 +6475,10 @@ class TurnRunner:
                 "output_tokens": _output_toks,
                 "model": _resolved_model,
                 "context_length": _context_length,
+                "reasoning_effort": (reasoning_config or {}).get("effort"),
+                "footer_included_in_final_response": _footer_included_in_final_response,
+                "response_previewed": result.get("response_previewed", False),
+                "response_transformed": result.get("response_transformed", False),
             }
 
         # Scan tool results for MEDIA:<path> tags that need to be delivered
@@ -6524,6 +6560,8 @@ class TurnRunner:
             "output_tokens": _output_toks,
             "model": _resolved_model,
             "context_length": _context_length,
+            "reasoning_effort": (reasoning_config or {}).get("effort"),
+            "footer_included_in_final_response": _footer_included_in_final_response,
             "session_id": effective_session_id,
             "response_previewed": result.get("response_previewed", False),
             "response_transformed": result.get("response_transformed", False),
@@ -20176,11 +20214,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     cwd=os.environ.get("TERMINAL_CWD", ""),
                     turn_seconds=_turn_seconds,
                     elapsed_s=_turn_seconds,
+                    reasoning_effort=agent_result.get("reasoning_effort"),
                 )
             except Exception as _footer_err:
                 logger.debug("runtime_footer build failed: %s", _footer_err)
                 _footer_line = ""
-            if _footer_line and response and not agent_result.get("already_sent") and not _intentional_silence:
+            if (
+                _footer_line
+                and response
+                and not agent_result.get("already_sent")
+                and not agent_result.get("footer_included_in_final_response")
+                and not _intentional_silence
+            ):
                 response = f"{response}\n\n{_footer_line}"
 
             # Emit agent:end hook
@@ -20555,21 +20600,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         await self._deliver_media_from_response(
                             response, event, _media_adapter,
                         )
-                # Streaming already delivered the body text, but the footer was
-                # intentionally held back (see the `not already_sent` gate above).
-                # Send it now as a small trailing message so Telegram/Discord/etc.
-                # still surface the runtime metadata on the final reply.
-                if _footer_line:
-                    try:
-                        _foot_adapter = self._adapter_for_source(source)
-                        if _foot_adapter:
-                            await _foot_adapter.send(
-                                source.chat_id,
-                                _footer_line,
-                                metadata=self._thread_metadata_for_source(source, self._reply_anchor_for_event(event)),
-                            )
-                    except Exception as _e:
-                        logger.debug("trailing footer send failed: %s", _e)
+                # Token-streaming attaches an enabled footer before its final
+                # edit; do not send a second trailing footer bubble here.
                 # This branch returns None so the adapter does not send the
                 # body twice. /loop and /goal hooks in _handle_message read
                 # the return value, so stash the delivered text on the event
@@ -28098,6 +28130,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             persist_user_display_kind=persist_user_display_kind,
         )
         turn_runner = TurnRunner(self, turn_ctx)
+        turn_ctx._agent_inner_started_at = time.time()
         # Callback invoked by agent on tool lifecycle events — extracted to
         # TurnRunner.progress_callback (bound method, same signature).
         turn_ctx.progress_callback = turn_runner.progress_callback

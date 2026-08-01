@@ -160,7 +160,7 @@ async def test_rich_always_keeps_details_math_crash_guard():
     bot.send_chat_action = AsyncMock()
     adapter._bot = bot
 
-    result = await adapter.send("12345", RICH_CONTENT)
+    result = await adapter.send("12345", DANGEROUS_DETAILS_MATH)
 
     assert result.success is True
     bot.do_api_request.assert_not_called()

@@ -74,6 +74,19 @@ def test_format_footer_skips_missing_context_length():
     assert "/tmp/wd" in out
 
 
+def test_format_footer_renders_reasoning_effort_in_rich_style():
+    out = format_runtime_footer(
+        model="m",
+        context_tokens=0,
+        context_length=None,
+        cwd="",
+        reasoning_effort="MAX",
+        fields=("reasoning_effort",),
+        style="labeled_quote",
+    )
+    assert out == "> 💭 max"
+
+
 # ---------------------------------------------------------------------------
 # resolve_footer_config
 # ---------------------------------------------------------------------------
@@ -88,6 +101,7 @@ def test_resolve_global_enable():
     cfg = resolve_footer_config(user, "telegram")
     assert cfg["enabled"] is True
     assert cfg["fields"] == ["model", "context_pct", "cwd"]
+
 
 def test_resolve_platform_override_wins():
     user = {
@@ -125,7 +139,6 @@ def test_resolve_platform_can_add_fields_only():
 # build_footer_line — top-level entry point used by gateway/run.py
 # ---------------------------------------------------------------------------
 
-
 def test_build_footer_per_platform_off_suppresses():
     user = {
         "display": {
@@ -137,11 +150,11 @@ def test_build_footer_per_platform_off_suppresses():
         user_config=user,
         platform_key="slack",
         model="openai/gpt-5.4",
-        context_tokens=10, context_length=100,
+        context_tokens=10,
+        context_length=100,
         cwd="/tmp",
     )
     assert out == ""
-
 
 
 # ---------------------------------------------------------------------------
@@ -258,11 +271,6 @@ def test_build_footer_line_threads_turn_seconds(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # Byte-stability: `latency` is opt-in, so the DEFAULT footer is unchanged.
-#
-# Upstream doctrine: a system prompt / rendered surface must be byte-stable for
-# the life of a conversation.  Adding a field to _DEFAULT_FIELDS would silently
-# change the footer text of every user who already enabled it.  These tests pin
-# the default set and the exact default-config output strings.
 # ---------------------------------------------------------------------------
 
 _LEGACY_DEFAULT_FIELDS = ["model", "context_pct", "cwd"]
@@ -295,11 +303,6 @@ def test_resolve_footer_config_default_fields_exclude_latency():
 def test_default_footer_renders_byte_identically(
     monkeypatch, model, tokens, window, cwd, expected
 ):
-    """Default-config output is byte-for-byte what it was before `latency`.
-
-    Note `turn_seconds` IS supplied — proving that even when the caller
-    measures timing, a default-configured footer does not show it.
-    """
     monkeypatch.delenv("TERMINAL_CWD", raising=False)
     out = format_runtime_footer(
         model=model,
@@ -327,3 +330,71 @@ def test_default_build_footer_line_ignores_turn_seconds(monkeypatch):
     with_timing = build_footer_line(**common, turn_seconds=125.0)
     assert baseline == "gpt-5.4 · 5% · /var/data"
     assert with_timing == baseline
+
+
+# ---------------------------------------------------------------------------
+# Local compact quote fields
+# ---------------------------------------------------------------------------
+
+def test_build_footer_passes_reasoning_effort_to_enabled_footer():
+    out = build_footer_line(
+        user_config={
+            "display": {
+                "runtime_footer": {
+                    "enabled": True,
+                    "fields": ["reasoning_effort"],
+                    "style": "labeled_quote",
+                }
+            }
+        },
+        platform_key="telegram",
+        model="",
+        context_tokens=0,
+        context_length=None,
+        cwd="",
+        reasoning_effort="high",
+    )
+    assert out == "> 💭 high"
+
+
+def test_build_footer_ignores_missing_reasoning_effort():
+    out = build_footer_line(
+        user_config={
+            "display": {
+                "runtime_footer": {
+                    "enabled": True,
+                    "fields": ["reasoning_effort"],
+                    "style": "labeled_quote",
+                }
+            }
+        },
+        platform_key="telegram",
+        model="",
+        context_tokens=0,
+        context_length=None,
+        cwd="",
+    )
+    assert out == ""
+
+
+def test_build_footer_combines_local_quote_fields_with_upstream_latency():
+    out = build_footer_line(
+        user_config={
+            "display": {
+                "runtime_footer": {
+                    "enabled": True,
+                    "fields": ["model", "elapsed_s", "latency", "reasoning_effort"],
+                    "style": "labeled_quote",
+                }
+            }
+        },
+        platform_key="telegram",
+        model="custom:Error/gpt-5.6-terra",
+        context_tokens=0,
+        context_length=None,
+        cwd="",
+        elapsed_s=12.34,
+        turn_seconds=12.34,
+        reasoning_effort="MAX",
+    )
+    assert out == "> 🧠 gpt-5.6-terra · ⏰ 12.3s · ⏰ 12s · 💭 max"

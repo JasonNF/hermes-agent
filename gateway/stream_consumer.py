@@ -288,6 +288,10 @@ class GatewayStreamConsumer:
         # of what was delivered, and the gateway's final-send suppression
         # can't recognize an already-delivered response. (#65919 review)
         self._delivered_segment_texts: list[str] = []
+        # Optional text appended exactly once to the final streamed response
+        # before the final edit/send. Runtime footers use this so the user sees
+        # one final message rather than a body message plus a footer bubble.
+        self._final_suffix = ""
         # Cache adapter lifecycle capability: only platforms that need an
         # explicit finalize call (e.g. DingTalk AI Cards) force us to make
         # a redundant final edit.  Everyone else keeps the fast path.
@@ -542,6 +546,29 @@ class GatewayStreamConsumer:
         except Exception:
             return False
         return evt.wait(timeout=max(0.0, float(timeout)))
+
+    def set_final_suffix(self, suffix: str) -> None:
+        """Queue *suffix* for exactly one final streamed delivery.
+
+        The gateway calls this after the agent has finished but before
+        :meth:`finish` is queued.  Empty suffixes are ignored.  The suffix is
+        intentionally consumed only by the final ``_DONE`` path so it can
+        never leak into a tool-boundary/interim segment.
+        """
+        if suffix:
+            self._final_suffix += str(suffix)
+
+    def _consume_final_suffix(self) -> None:
+        """Merge the queued final-only suffix into the final accumulated text."""
+        if not self._final_suffix:
+            return
+        if not self._accumulated:
+            # If no actual response was streamed, let the ordinary final-send
+            # path own delivery; a footer must not become a standalone reply.
+            self._final_suffix = ""
+            return
+        self._accumulated += self._final_suffix
+        self._final_suffix = ""
 
     def _notify_new_message(self) -> None:
         """Fire the on_new_message callback, swallowing any errors."""
@@ -872,6 +899,12 @@ class GatewayStreamConsumer:
                     ):
                         await self._suppress_silence_marker()
                         return
+
+                # The suffix belongs only to the completed final response.
+                # Consume it after intentional-silence filtering, so a control
+                # marker can never turn the footer into an outgoing message.
+                if got_done:
+                    self._consume_final_suffix()
 
                 # Decide whether to flush an edit
                 now = time.monotonic()

@@ -351,6 +351,57 @@ class TestAdapterPrefersFreshFinal:
 
         assert consumer.final_response_sent is True
 
+    @pytest.mark.asyncio
+    async def test_final_suffix_is_merged_before_fresh_final_send(self):
+        adapter = _make_fresh_final_adapter()
+        cfg = StreamConsumerConfig(
+            transport="auto", chat_type="dm",
+            edit_interval=0.01, buffer_threshold=5, cursor="",
+            fresh_final_after_seconds=0.0,
+        )
+        consumer = GatewayStreamConsumer(adapter, "12345", cfg)
+
+        consumer.on_delta("Full answer here")
+        task = asyncio.create_task(consumer.run())
+        await asyncio.sleep(0.05)
+        consumer.set_final_suffix("\n\n> 🧠 gpt-5.6-terra · ⏰ 1.2s")
+        consumer.finish()
+        await task
+
+        assert adapter.send.await_count == 2
+        assert adapter.send.call_args_list[0].kwargs.get("content") == "Full answer here"
+        assert adapter.send.call_args_list[1].kwargs.get("content") == (
+            "Full answer here\n\n> 🧠 gpt-5.6-terra · ⏰ 1.2s"
+        )
+        adapter.edit_message.assert_not_called()
+        adapter.delete_message.assert_awaited_once_with("12345", "preview1")
+        assert consumer.final_response_sent is True
+
+
+@pytest.mark.asyncio
+async def test_final_suffix_is_merged_before_final_edit():
+    adapter = _make_draft_capable_adapter(supports_draft=False)
+    cfg = StreamConsumerConfig(
+        transport="edit", chat_type="dm",
+        edit_interval=0.01, buffer_threshold=5, cursor="",
+    )
+    consumer = GatewayStreamConsumer(adapter, "12345", cfg)
+
+    consumer.on_delta("Full answer here")
+    task = asyncio.create_task(consumer.run())
+    await asyncio.sleep(0.05)
+    consumer.set_final_suffix("\n\n> 🧠 gpt-5.6-terra · ⏰ 1.2s")
+    consumer.finish()
+    await task
+
+    adapter.send.assert_awaited_once()
+    adapter.edit_message.assert_awaited()
+    assert adapter.send.call_args.kwargs.get("content") == "Full answer here"
+    final_edit = adapter.edit_message.await_args_list[-1].kwargs
+    assert final_edit["content"] == "Full answer here\n\n> 🧠 gpt-5.6-terra · ⏰ 1.2s"
+    assert final_edit["finalize"] is True
+    assert consumer.final_response_sent is True
+
 
 def _make_rich_capable_adapter(*, overflow_limit=32768, send_results=None):
     """Non-draft adapter that mimics Telegram rich messages: REQUIRES_EDIT_FINALIZE,

@@ -25,9 +25,9 @@ so a footer whose ``fields`` are unset renders exactly as before. Use
 ``latency`` for the upstream compact duration format; ``elapsed_s`` remains
 available for the local labeled Telegram quote configuration.
 
-When ``style: labeled_quote`` is set, each supported field is prefixed with an
-emoji and the whole line is wrapped in a block quote (``> ...``), giving a
-compact, scannable Telegram footer.
+When ``style: labeled_quote`` is set, each supported field is emoji-prefixed
+and the whole line is wrapped in a block quote (``> ...``), giving a compact,
+scannable Telegram footer.
 
 Per-platform overrides live under
 ``display.platforms.<platform>.runtime_footer``. Users can toggle the global
@@ -49,10 +49,10 @@ def _home_relative_cwd(cwd: str) -> str:
         return ""
     try:
         home = os.path.expanduser("~")
-        p = os.path.abspath(cwd)
-        if home and (p == home or p.startswith(home + os.sep)):
-            return "~" + p[len(home):]
-        return p
+        path = os.path.abspath(cwd)
+        if home and (path == home or path.startswith(home + os.sep)):
+            return "~" + path[len(home):]
+        return path
     except Exception:
         return cwd
 
@@ -76,29 +76,29 @@ def resolve_footer_config(
         3. ``display.platforms.<platform_key>.runtime_footer``
     """
     resolved = {"enabled": False, "fields": list(_DEFAULT_FIELDS), "style": "plain"}
-    cfg = (user_config or {}).get("display") or {}
+    display_config = (user_config or {}).get("display") or {}
 
-    global_cfg = cfg.get("runtime_footer")
-    if isinstance(global_cfg, dict):
-        if "enabled" in global_cfg:
-            resolved["enabled"] = bool(global_cfg.get("enabled"))
-        if isinstance(global_cfg.get("fields"), list) and global_cfg["fields"]:
-            resolved["fields"] = [str(f) for f in global_cfg["fields"]]
-        if isinstance(global_cfg.get("style"), str) and global_cfg["style"]:
-            resolved["style"] = str(global_cfg["style"])
+    global_config = display_config.get("runtime_footer")
+    if isinstance(global_config, dict):
+        if "enabled" in global_config:
+            resolved["enabled"] = bool(global_config.get("enabled"))
+        if isinstance(global_config.get("fields"), list) and global_config["fields"]:
+            resolved["fields"] = [str(field) for field in global_config["fields"]]
+        if isinstance(global_config.get("style"), str) and global_config["style"]:
+            resolved["style"] = str(global_config["style"])
 
     if platform_key:
-        platforms = cfg.get("platforms") or {}
-        plat_cfg = platforms.get(platform_key)
-        if isinstance(plat_cfg, dict):
-            plat_footer = plat_cfg.get("runtime_footer")
-            if isinstance(plat_footer, dict):
-                if "enabled" in plat_footer:
-                    resolved["enabled"] = bool(plat_footer.get("enabled"))
-                if isinstance(plat_footer.get("fields"), list) and plat_footer["fields"]:
-                    resolved["fields"] = [str(f) for f in plat_footer["fields"]]
-                if isinstance(plat_footer.get("style"), str) and plat_footer["style"]:
-                    resolved["style"] = str(plat_footer["style"])
+        platforms = display_config.get("platforms") or {}
+        platform_config = platforms.get(platform_key)
+        if isinstance(platform_config, dict):
+            platform_footer = platform_config.get("runtime_footer")
+            if isinstance(platform_footer, dict):
+                if "enabled" in platform_footer:
+                    resolved["enabled"] = bool(platform_footer.get("enabled"))
+                if isinstance(platform_footer.get("fields"), list) and platform_footer["fields"]:
+                    resolved["fields"] = [str(field) for field in platform_footer["fields"]]
+                if isinstance(platform_footer.get("style"), str) and platform_footer["style"]:
+                    resolved["style"] = str(platform_footer["style"])
 
     return resolved
 
@@ -126,11 +126,11 @@ def format_runtime_footer(
     reasoning_effort: Optional[str] = None,
     style: str = "plain",
 ) -> str:
-    """Render the footer line, or return "" if no fields have data.
+    """Render the footer line, or return ``""`` if no fields have data.
 
-    Fields are skipped silently when their underlying data is missing. When
-    *style* is ``"labeled_quote"``, each supported field is emoji-prefixed and
-    the whole line is wrapped in a block quote.
+    Fields are skipped silently when their data is missing. With
+    ``style="labeled_quote"``, each supported field has an emoji prefix and the
+    completed footer is returned as one block quote.
     """
     rich_style = str(style or "plain") == "labeled_quote"
     parts: list[str] = []
@@ -180,8 +180,8 @@ def build_footer_line(
     reasoning_effort: Optional[str] = None,
 ) -> str:
     """Build the enabled footer from resolved config and supplied turn metadata."""
-    cfg = resolve_footer_config(user_config, platform_key)
-    if not cfg.get("enabled"):
+    config = resolve_footer_config(user_config, platform_key)
+    if not config.get("enabled"):
         return ""
     return format_runtime_footer(
         model=model,
@@ -191,6 +191,6 @@ def build_footer_line(
         turn_seconds=turn_seconds,
         elapsed_s=elapsed_s,
         reasoning_effort=reasoning_effort,
-        fields=cfg.get("fields") or _DEFAULT_FIELDS,
-        style=str(cfg.get("style") or "plain"),
+        fields=config.get("fields") or _DEFAULT_FIELDS,
+        style=str(config.get("style") or "plain"),
     )
