@@ -64,6 +64,9 @@ class TurnContext:
     #     send_progress_messages is scheduled) ----------------------------
     _progress_metadata: Optional[dict] = None
     _progress_reply_to: Optional[Any] = None
+    # Wall-clock marker set by the outer gateway run before the executor starts.
+    # The stream-final footer uses it after the agent returns.
+    _agent_inner_started_at: float | None = None
 
     # ------------------------------------------------------------------
     # run_sync extraction (second wave of the seam): the closed-over locals
