@@ -26,6 +26,22 @@ def _isolate_sessions():
     bt._active_sessions.update(orig)
 
 
+def test_socket_safe_tmpdir_prefers_valid_short_override(monkeypatch, tmp_path):
+    import tools.browser_tool as bt
+
+    monkeypatch.setattr(bt.sys, "platform", "darwin")
+    monkeypatch.setenv("HERMES_SHORT_TMPDIR", str(tmp_path))
+    assert bt._socket_safe_tmpdir() == str(tmp_path)
+
+
+def test_socket_safe_tmpdir_ignores_unusable_override(monkeypatch, tmp_path):
+    import tools.browser_tool as bt
+
+    monkeypatch.setattr(bt.sys, "platform", "darwin")
+    monkeypatch.setenv("HERMES_SHORT_TMPDIR", str(tmp_path / "missing"))
+    assert bt._socket_safe_tmpdir() == "/tmp"
+
+
 def _make_socket_dir(tmpdir, session_name, pid=None, owner_pid=None):
     """Create a fake agent-browser socket directory with optional PID files.
 

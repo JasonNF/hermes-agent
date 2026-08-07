@@ -50,6 +50,24 @@ from typing import Any, Dict, List, Optional, Tuple
 from tools.thread_context import propagate_context_to_thread
 from agent.thread_scoped_output import thread_scoped_silence
 
+
+def _short_socket_tmpdir() -> str:
+    """Return a short writable directory for local Unix-domain sockets.
+
+    ``HERMES_SHORT_TMPDIR`` can be a short /tmp alias pointing to external
+    storage.  Falling back to /tmp on macOS preserves the AF_UNIX path-length
+    safeguard for normal installations.
+    """
+    override = os.environ.get("HERMES_SHORT_TMPDIR", "").strip()
+    if (
+        override
+        and os.path.isabs(override)
+        and os.path.isdir(override)
+        and os.access(override, os.W_OK | os.X_OK)
+    ):
+        return override.rstrip("/") or "/"
+    return "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
+
 # Availability gate.  On Windows we fall back to loopback TCP for the
 # sandbox RPC transport (AF_UNIX is unreliable on Windows Python) — see
 # ``_use_tcp_rpc`` in ``_execute_local`` below.  That makes execute_code
@@ -1353,7 +1371,7 @@ def execute_code(
     # same ephemeral port, same 1-connection listen queue, same serialized
     # request/response framing.  The generated client reads the transport
     # selector from HERMES_RPC_SOCKET (path vs. ``tcp://host:port``).
-    _sock_tmpdir = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
+    _sock_tmpdir = _short_socket_tmpdir()
     _use_tcp_rpc = _IS_WINDOWS
     if _use_tcp_rpc:
         sock_path = None  # not used on Windows; TCP endpoint stored below

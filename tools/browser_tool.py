@@ -1586,17 +1586,18 @@ def _resolve_allow_private_urls() -> bool:
 
 
 def _socket_safe_tmpdir() -> str:
-    """Return a short temp directory path suitable for Unix domain sockets.
+    """Return a short, writable temp dir suitable for Unix domain sockets.
 
-    macOS sets ``TMPDIR`` to ``/var/folders/xx/.../T/`` (~51 chars).  When we
-    append ``agent-browser-hermes_…`` the resulting socket path exceeds the
-    104-byte macOS limit for ``AF_UNIX`` addresses, causing agent-browser to
-    fail with "Failed to create socket directory" or silent screenshot failures.
-
-    Linux ``tempfile.gettempdir()`` already returns ``/tmp``, so this is a
-    no-op there.  On macOS we bypass ``TMPDIR`` and use ``/tmp`` directly
-    (symlink to ``/private/tmp``, sticky-bit protected, always available).
+    macOS's default ``TMPDIR`` is long enough to overflow its 104-byte AF_UNIX
+    socket-path limit once an agent-browser session name is appended.  A caller
+    may set ``HERMES_SHORT_TMPDIR`` to a short stable alias (for example a
+    ``/tmp`` symlink targeting external storage); use it only when it is an
+    absolute writable directory.  The historical ``/tmp`` fallback remains
+    necessary for ordinary macOS installations.
     """
+    override = os.environ.get("HERMES_SHORT_TMPDIR", "").strip()
+    if override and os.path.isabs(override) and os.path.isdir(override) and os.access(override, os.W_OK | os.X_OK):
+        return override.rstrip("/") or "/"
     if sys.platform == "darwin":
         return "/tmp"
     return tempfile.gettempdir()

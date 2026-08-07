@@ -536,6 +536,36 @@ class TestEnvVarFiltering(unittest.TestCase):
         child_env = self._get_child_env()
         self.assertIn("HERMES_RPC_SOCKET", child_env)
 
+    def test_short_socket_tmpdir_override_is_used(self):
+        import tempfile
+        import tools.code_execution_tool as cet
+
+        env_backup = os.environ.copy()
+        platform_backup = cet.sys.platform
+        try:
+            with tempfile.TemporaryDirectory() as tmp_path:
+                cet.sys.platform = "darwin"
+                os.environ["HERMES_SHORT_TMPDIR"] = tmp_path
+                self.assertEqual(cet._short_socket_tmpdir(), tmp_path)
+        finally:
+            cet.sys.platform = platform_backup
+            os.environ.clear()
+            os.environ.update(env_backup)
+
+    def test_short_socket_tmpdir_falls_back_when_override_missing(self):
+        import tools.code_execution_tool as cet
+
+        env_backup = os.environ.copy()
+        platform_backup = cet.sys.platform
+        try:
+            cet.sys.platform = "darwin"
+            os.environ.pop("HERMES_SHORT_TMPDIR", None)
+            self.assertEqual(cet._short_socket_tmpdir(), "/tmp")
+        finally:
+            cet.sys.platform = platform_backup
+            os.environ.clear()
+            os.environ.update(env_backup)
+
 
     def test_timezone_injected_when_set(self):
         env_backup = os.environ.copy()
