@@ -90,6 +90,30 @@ class TestConsumerDeclaredFinal:
         assert sc.delivered_final_matches(final_with_footer) is True
 
     @pytest.mark.asyncio
+    async def test_footer_bearing_authoritative_final_rides_fresh_final_send(self):
+        """A rich/fresh final gets the complete footer-bearing payload once."""
+        from tests.gateway.test_stream_consumer_draft import _make_fresh_final_adapter
+
+        adapter = _make_fresh_final_adapter()
+        cfg = StreamConsumerConfig(
+            transport="auto", chat_type="dm",
+            edit_interval=0.01, buffer_threshold=1, cursor="",
+            fresh_final_after_seconds=0.0,
+        )
+        sc = GatewayStreamConsumer(adapter, "D1", cfg)
+        final_with_footer = "streamed answer body\n\n> 🧠 gpt-5.6-terra · ⏰ 1.2s"
+
+        task = asyncio.create_task(sc.run())
+        sc.on_delta("streamed answer body")
+        await asyncio.sleep(0.06)
+        sc.finish(final_with_footer)
+        await task
+
+        assert adapter.send.await_count == 2
+        assert adapter.send.call_args_list[-1].kwargs.get("content") == final_with_footer
+        assert sc.delivered_final_matches(final_with_footer) is True
+
+    @pytest.mark.asyncio
     async def test_finish_bare_keeps_legacy_behavior(self):
         adapter = _make_draft_adapter()
         cfg = StreamConsumerConfig(

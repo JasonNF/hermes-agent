@@ -340,10 +340,6 @@ class GatewayStreamConsumer:
         # of what was delivered, and the gateway's final-send suppression
         # can't recognize an already-delivered response. (#65919 review)
         self._delivered_segment_texts: list[str] = []
-        # Optional text appended exactly once to the final streamed response
-        # before the final edit/send. Runtime footers use this so the user sees
-        # one final message rather than a body message plus a footer bubble.
-        self._final_suffix = ""
         # Cache adapter lifecycle capability: only platforms that need an
         # explicit finalize call (e.g. DingTalk AI Cards) force us to make
         # a redundant final edit.  Everyone else keeps the fast path.
@@ -810,6 +806,7 @@ class GatewayStreamConsumer:
             and not self._native_stream_opened
         ):
             self._queue.put(_REOPEN_SEED)
+
     def set_final_suffix(self, suffix: str) -> None:
         """Queue *suffix* for exactly one final streamed delivery.
 
@@ -832,7 +829,6 @@ class GatewayStreamConsumer:
             return
         self._accumulated += self._final_suffix
         self._final_suffix = ""
-
     def _notify_new_message(self) -> None:
         """Fire the on_new_message callback, swallowing any errors."""
         cb = self._on_new_message
@@ -1497,12 +1493,6 @@ class GatewayStreamConsumer:
                     ):
                         await self._suppress_silence_marker()
                         return
-
-                # The suffix belongs only to the completed final response.
-                # Consume it after intentional-silence filtering, so a control
-                # marker can never turn the footer into an outgoing message.
-                if got_done:
-                    self._consume_final_suffix()
 
                 # Decide whether to flush an edit
                 now = time.monotonic()

@@ -6999,48 +6999,10 @@ class TurnRunner:
 
         ctx.result_holder[0] = result
 
-        # Signal the stream consumer that the agent is done. Pass the
-        # completed final_response as the authoritative finalize payload:
-        # it includes post-stream augmentation (file-mutation verifier
-        # footer, turn-completion explainer) the consumer's accumulator
-        # never saw, so the seal/final edit delivers the TRUE final and no
-        # separate corrective send fires (live finding #11). Failed turns
-        # pass nothing — error text is delivered by the gateway's normal
-        # path, not baked into the stream.
-        if _stream_consumer is not None:
-            _final_for_stream = None
-            # Adopt ONLY a genuinely completed final (review B6): interrupt
-            # paths return {interrupted: True, completed: False} with a
-            # DIAGNOSTIC final_response ("Operation interrupted during …")
-            # and no failed key — adopting that would seal the user's
-            # streamed partial answer over with the diagnostic AND make
-            # delivered_final_matches reconcile, suppressing the gateway's
-            # own error-delivery path. Writers of these shapes:
-            # agent/conversation_loop.py interrupt/retry-abort returns.
-            if (
-                isinstance(result, dict)
-                and not result.get("failed")
-                and not result.get("interrupted")
-                and result.get("completed") is not False
-            ):
-                _fr = result.get("final_response")
-                if isinstance(_fr, str) and _fr.strip() and _fr != "(empty)":
-                    _final_for_stream = _fr
-            if _final_for_stream is not None:
-                # Duck-type safe: test doubles / older consumers may expose a
-                # zero-arg finish(). The payload is an optimization, not a
-                # requirement — fall back to the bare signal.
-                try:
-                    _stream_consumer.finish(_final_for_stream)
-                except TypeError:
-                    _stream_consumer.finish()
-            else:
-                _stream_consumer.finish()
-        # Signal the streaming-TTS consumer that the agent is done (#60671).
-        # finish() is called from the outer event-loop thread after the
-        # executor returns, so early returns from run_sync are also
-        # finalised.  See the outer finally/completion section below.
-        
+        # Signal the streaming-TTS consumer after the stream-final footer
+        # assembly below. The ordinary stream consumer is also finalized there,
+        # so its authoritative payload includes the local runtime footer.
+        #
         # Return final response, or a message if something went wrong
         final_response = result.get("final_response")
 
@@ -7081,17 +7043,41 @@ class TurnRunner:
                         reasoning_effort=(reasoning_config or {}).get("effort"),
                     )
                     if _stream_footer:
-                        _stream_consumer.set_final_suffix(f"\n\n{_stream_footer}")
-                        # Mirror the same suffix into the returned response. If
-                        # streaming falls back before final delivery, the normal
-                        # gateway send still carries the footer exactly once.
+                        # Mirror the suffix into the completed response before
+                        # `finish(final_text)`: the consumer's authoritative
+                        # finalize payload then carries body + footer in one
+                        # final edit/send. Do not queue a separate suffix too,
+                        # or the footer would be appended twice.
                         final_response = f"{final_response}\n\n{_stream_footer}"
                         _footer_included_in_final_response = True
                 except Exception as _footer_err:
                     logger.debug("stream runtime_footer attach failed: %s", _footer_err)
-            # Finish only after any suffix has been queued. A second finish
-            # from cleanup is harmless, but this ordering is not optional.
-            _stream_consumer.finish()
+            # Finish only after the footer has been merged into the complete
+            # response. Passing it as the authoritative final payload preserves
+            # upstream's post-stream reconciliation and avoids a second footer
+            # bubble. Interrupted/failed turns keep the normal gateway path.
+            _final_for_stream = None
+            if (
+                isinstance(result, dict)
+                and not result.get("failed")
+                and not result.get("interrupted")
+                and result.get("completed") is not False
+                and isinstance(final_response, str)
+                and final_response.strip()
+                and final_response != "(empty)"
+            ):
+                _final_for_stream = final_response
+            if _final_for_stream is not None:
+                try:
+                    _stream_consumer.finish(_final_for_stream)
+                except TypeError:
+                    _stream_consumer.finish()
+            else:
+                _stream_consumer.finish()
+
+        # Signal the streaming-TTS consumer that the agent is done (#60671).
+        # finish() is called from the outer event-loop thread after the
+        # executor returns, so early returns from run_sync are also finalised.
 
         # Sync session_id immediately after run_conversation(). Compression
         # can rotate before a follow-up model call fails; the failure return
