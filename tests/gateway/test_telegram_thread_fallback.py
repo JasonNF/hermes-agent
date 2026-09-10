@@ -18,12 +18,11 @@ import pytest
 
 from gateway.config import PlatformConfig, Platform
 from gateway.platforms.base import (
-    MessageEvent,
-    MessageType,
     SendResult,
     _reply_anchor_for_event,
     _thread_metadata_for_source,
 )
+from gateway.platforms.event import MessageEvent, MessageType
 from gateway.session import build_session_key
 
 
@@ -566,10 +565,14 @@ async def test_send_image_upload_dm_topic_reply_not_found_retry_drops_thread_id(
 @pytest.mark.asyncio
 async def test_send_image_upload_fallback_blocks_connect_time_rebind(monkeypatch):
     import httpcore
+    import httpx._utils
     from httpcore._backends.auto import AutoBackend
     from gateway.platforms.base import BasePlatformAdapter
 
     adapter = _make_adapter()
+    # This test exercises DIRECT connect-time DNS validation. On macOS,
+    # clearing env vars alone leaves urllib's system proxy discovery active.
+    monkeypatch.setattr(httpx._utils, "getproxies", lambda: {})
     adapter._bot = SimpleNamespace(
         send_photo=AsyncMock(side_effect=RuntimeError("force URL upload fallback"))
     )
@@ -723,5 +726,4 @@ async def test_thread_fallback_only_fires_once():
     # Second chunk: should use thread_id=None directly (effective_thread_id
     # was cleared per-chunk but the metadata doesn't change between chunks)
     # The key point: the message was delivered despite the invalid thread
-
 
