@@ -152,7 +152,13 @@ def format_runtime_footer(
                 value = _format_latency(turn_seconds)
                 parts.append(f"⏰ {value}" if rich_style else value)
         elif field == "cwd":
-            value = _home_relative_cwd(cwd or os.environ.get("TERMINAL_CWD", ""))
+            try:
+                from tools.terminal_scope import terminal_env as _tenv
+            except ImportError:
+                env_cwd = os.environ.get("TERMINAL_CWD", "")
+            else:
+                env_cwd = _tenv("TERMINAL_CWD", "")
+            value = _home_relative_cwd(cwd or env_cwd)
             if value:
                 parts.append(f"📁 {value}" if rich_style else value)
         elif field == "reasoning_effort":
