@@ -340,6 +340,11 @@ class GatewayStreamConsumer:
         # of what was delivered, and the gateway's final-send suppression
         # can't recognize an already-delivered response. (#65919 review)
         self._delivered_segment_texts: list[str] = []
+        # Suffixes queued by callers for the final streamed delivery (for
+        # example runtime metadata). Keep this initialized even when no suffix
+        # is used so the base consumer's set_final_suffix() is safe for
+        # non-plugin callers and compatible subclasses.
+        self._final_suffix = ""
         # Cache adapter lifecycle capability: only platforms that need an
         # explicit finalize call (e.g. DingTalk AI Cards) force us to make
         # a redundant final edit.  Everyone else keeps the fast path.
